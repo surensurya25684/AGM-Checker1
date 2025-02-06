@@ -1,41 +1,22 @@
 import streamlit as st
 import pandas as pd
-from edgar import Company
-import io
+from sec_edgar_downloader import Downloader
 
-# Streamlit App
 st.title("SEC Form 5.07 Checker")
 
-# Helper Function
 @st.cache_data
-def process_company(cik):
-    """Processes a single company and returns the result, fetching company name from Edgar."""
+def check_form_507(cik):
     try:
-        company = Company(cik)  # Only CIK is needed
-        company_name = company.name
-        filings = company.get_filings(form="8-K")
-        form_507_found = any(
-            hasattr(filing, 'items') and '5.07' in filing.items and filing.filing_date.year == 2024  #hardcoded target_year for safety and to allow it to work
-            for filing in filings
-        )
-
-        link = next(
-            (
-                f"https://www.sec.gov/Archives/edgar/data/{cik}/{filing.accession_number.replace('-', '')}/index.html"
-                for filing in filings
-                if hasattr(filing, 'items') and '5.07' in filing.items and filing.filing_date.year == 2024   #Hardcoded target_year for safety and to allow it to work
-            ),
-            f"https://www.sec.gov/Archives/edgar/data/{cik}/NotFound.htm",
-        )
-        return {
-            "CIK": cik,
-            "Company Name": company_name,
-            "Form_5.07_Available": "Yes" if form_507_found else "No",
-            "Form_5.07_Link": link,
-        }
+        dl = Downloader(".", cik) # Downloads to current directory
+        num_8k = dl.get("8-K")
+        # Check if any 8-K filings exist
+        if num_8k > 0:
+            return "Yes"
+        else:
+            return "No"
     except Exception as e:
         st.error(f"Error processing CIK {cik}: {e}")
-        return {"CIK": cik, "Company Name": "Error", "Form_5.07_Available": "Error", "Form_5.07_Link": None}
+        return "Error"
 
 # Input Method Selection
 input_method = st.radio("Select Input Method:", ("Manual CIK Input", "Upload Excel File"))
@@ -50,7 +31,11 @@ if input_method == "Manual CIK Input":
             st.warning("Please enter at least one CIK.")
         else:
             with st.spinner("Processing..."):
-                results = [process_company(cik) for cik in ciks]
+                results = []
+                for cik in ciks:
+                    form_507_available = check_form_507(cik)
+                    results.append({"CIK": cik, "Form_5.07_Available": form_507_available})
+
             df = pd.DataFrame(results)
             st.dataframe(df)
             st.download_button(
@@ -70,7 +55,11 @@ elif input_method == "Upload Excel File":
             ciks = df['CIK'].astype(str).tolist()
 
             with st.spinner("Processing..."):
-                results = [process_company(cik) for cik in ciks]
+                results = []
+                for cik in ciks:
+                    form_507_available = check_form_507(cik)
+                    results.append({"CIK": cik, "Form_5.07_Available": form_507_available})
+
             df = pd.DataFrame(results)
             st.dataframe(df)
             st.download_button(
