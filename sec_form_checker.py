@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from edgar import Company
+from edgar import Company  # Import only Company
 import io
 
 # Streamlit App
@@ -11,11 +11,11 @@ st.title("SEC Form 5.07 Checker")
 def process_company(cik):
     """Processes a single company and returns the result, fetching company name from Edgar."""
     try:
-        company = Company(str(cik))  # Only CIK is needed
-        company_name = company.name
+        company = Company(cik)  # Only CIK is needed as a keyword argument
+
         filings = company.get_filings(form="8-K")
         form_507_found = any(
-            hasattr(filing, 'items') and '5.07' in filing.items and filing.filing_date.year == 2024  #Hardcoded target_year for safety and to allow it to work
+            hasattr(filing, 'items') and '5.07' in filing.items and filing.filing_date.year == 2024  # hardcoded to 2024
             for filing in filings
         )
 
@@ -23,13 +23,14 @@ def process_company(cik):
             (
                 f"https://www.sec.gov/Archives/edgar/data/{cik}/{filing.accession_number.replace('-', '')}/index.html"
                 for filing in filings
-                if hasattr(filing, 'items') and '5.07' in filing.items and filing.filing_date.year == 2024   #Hardcoded target_year for safety and to allow it to work
+                if hasattr(filing, 'items') and '5.07' in filing.items and filing.filing_date.year == 2024  # hardcoded to 2024
             ),
             f"https://www.sec.gov/Archives/edgar/data/{cik}/NotFound.htm",
         )
+
         return {
             "CIK": cik,
-            "Company Name": company_name,
+            "Company Name": company.name,
             "Form_5.07_Available": "Yes" if form_507_found else "No",
             "Form_5.07_Link": link,
         }
@@ -81,5 +82,3 @@ elif input_method == "Upload Excel File":
             )
         except Exception as e:
             st.error(f"Error processing file: {e}")
-
-# Make sure requirements.txt is correct
