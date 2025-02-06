@@ -4,7 +4,8 @@ from edgar import Company, set_identity
 import io
 
 # Config
-set_identity("suren.surya@msci.com")  # Replace with your email
+email = st.text_area("email:" )
+set_identity(email)  # Replace with your email
 TARGET_YEAR = 2024
 
 # Function: Process Company (fetch name from Edgar)
