@@ -18,63 +18,71 @@ uploaded_file = st.file_uploader("Upload an Excel file (must contain a 'CIK' col
 # Manual CIK Input
 manual_cik = st.text_input("Or enter a CIK number manually:")
 
-# Button to Process Data
+# Function to Fetch SEC Filings
+def fetch_filings(cik):
+    """Fetch 8-K filings and check for Form 5.07 using the SEC API"""
+    headers = {"User-Agent": user_email}
+    cik = str(cik).zfill(10)  # Ensure CIK is 10 digits
+    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+
+    response = requests.get(url, headers=headers)
+
+    if response.status_code == 200:
+        data = response.json()
+
+        # 🔹 Debug: Print SEC API Response
+        st.write(f"SEC API Response for CIK {cik}:", data)
+
+        # Extract the latest 8-K filings
+        form_507_found = False
+        form_507_link = None
+
+        if "filings" in data and "recent" in data["filings"]:
+            recent_filings = data["filings"]["recent"]
+            form_types = recent_filings["form"]
+            filing_dates = recent_filings["filingDate"]
+            accession_numbers = recent_filings["accessionNumber"]
+
+            for i, form in enumerate(form_types):
+                if form == "8-K" and filing_dates[i].startswith("2024"):
+                    formatted_accession_number = accession_numbers[i].replace('-', '')
+                    filing_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.json"
+
+                    # 🔹 Fetch filing details
+                    filing_response = requests.get(filing_url, headers=headers)
+
+                    if filing_response.status_code == 200:
+                        filing_data = filing_response.json()
+                        
+                        # 🔹 Debug: Print Filing JSON Data
+                        st.write(f"Checking 8-K Filing: {filing_url}")
+                        st.write(f"Filing JSON Data:", filing_data)
+
+                        # 🔹 Check if Item 5.07 is in the filing
+                        if "items" in filing_data and "5.07" in filing_data["items"]:
+                            form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.html"
+                            form_507_found = True
+                            break  # Stop once we find the first 5.07 filing
+
+        return {
+            "CIK": cik,
+            "Form_5.07_Available": "Yes" if form_507_found else "No",
+            "Form_5.07_Link": form_507_link if form_507_found else f"https://www.sec.gov/Archives/edgar/data/{cik}/NotFound.htm"
+        }
+    else:
+        st.error(f"Error fetching data for CIK {cik}: HTTP {response.status_code}")
+        return {
+            "CIK": cik,
+            "Form_5.07_Available": "Error",
+            "Form_5.07_Link": None
+        }
+
+# Process Data on Button Click
 if st.button("Check Filings"):
     if not user_email:
         st.error("Please enter your email to proceed.")
     else:
         results = []
-
-        def fetch_filings(cik):
-            """Fetch 8-K filings and check for Form 5.07 using the SEC API"""
-            headers = {"User-Agent": user_email}
-            cik = str(cik).zfill(10)  # Ensure CIK is 10 digits
-            url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-
-            response = requests.get(url, headers=headers)
-
-            if response.status_code == 200:
-                data = response.json()
-                
-                # Extract the latest 8-K filings
-                form_507_found = False
-                form_507_link = None
-
-                if "filings" in data and "recent" in data["filings"]:
-                    recent_filings = data["filings"]["recent"]
-                    form_types = recent_filings["form"]
-                    filing_dates = recent_filings["filingDate"]
-                    accession_numbers = recent_filings["accessionNumber"]
-
-                    for i, form in enumerate(form_types):
-                        if form == "8-K" and filing_dates[i].startswith("2024"):
-                            formatted_accession_number = accession_numbers[i].replace('-', '')
-                            filing_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.json"
-
-                            # Fetch filing details
-                            filing_response = requests.get(filing_url, headers=headers)
-
-                            if filing_response.status_code == 200:
-                                filing_data = filing_response.json()
-
-                                # Check if Item 5.07 is in the filing
-                                if "items" in filing_data and "5.07" in filing_data["items"]:
-                                    form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.html"
-                                    form_507_found = True
-                                    break
-
-                return {
-                    "CIK": cik,
-                    "Form_5.07_Available": "Yes" if form_507_found else "No",
-                    "Form_5.07_Link": form_507_link if form_507_found else f"https://www.sec.gov/Archives/edgar/data/{cik}/NotFound.htm"
-                }
-            else:
-                st.error(f"Error fetching data for CIK {cik}: HTTP {response.status_code}")
-                return {
-                    "CIK": cik,
-                    "Form_5.07_Available": "Error",
-                    "Form_5.07_Link": None
-                }
 
         if uploaded_file:
             companies_df = pd.read_excel(uploaded_file)
