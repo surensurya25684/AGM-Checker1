@@ -49,9 +49,19 @@ if st.button("Check Filings"):
                     for i, form in enumerate(form_types):
                         if form == "8-K" and filing_dates[i].startswith("2024"):
                             formatted_accession_number = accession_numbers[i].replace('-', '')
-                            form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.html"
-                            form_507_found = True
-                            break
+                            filing_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.json"
+
+                            # Fetch filing details
+                            filing_response = requests.get(filing_url, headers=headers)
+
+                            if filing_response.status_code == 200:
+                                filing_data = filing_response.json()
+
+                                # Check if Item 5.07 is in the filing
+                                if "items" in filing_data and "5.07" in filing_data["items"]:
+                                    form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.html"
+                                    form_507_found = True
+                                    break
 
                 return {
                     "CIK": cik,
