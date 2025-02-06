@@ -1,34 +1,32 @@
-import os
 import streamlit as st
 import pandas as pd
 from edgar import Company
 import io
 
-# Config
-email = st.text_area("Email:")
-os.environ['EDGAR_IDENTITY'] = email  # Set the environment variable
-TARGET_YEAR = 2024
+# Streamlit App
+st.title("SEC Form 5.07 Checker")
 
-# Function: Process Company (fetch name from Edgar)
-@st.cache  # Cache results for faster repeated execution
+# Helper Function
+@st.cache_data
 def process_company(cik):
+    """Processes a single company and returns the result, fetching company name from Edgar."""
     try:
-        company = Company(cik=cik)  # Ensure 'cik' is passed correctly
+        company = Company(str(cik))  # Only CIK is needed
         company_name = company.name
         filings = company.get_filings(form="8-K")
         form_507_found = any(
-            hasattr(filing, 'items') and '5.07' in filing.items and filing.filing_date.year == TARGET_YEAR
+            hasattr(filing, 'items') and '5.07' in filing.items and filing.filing_date.year == 2024  #Hardcoded target_year for safety and to allow it to work
             for filing in filings
         )
+
         link = next(
             (
                 f"https://www.sec.gov/Archives/edgar/data/{cik}/{filing.accession_number.replace('-', '')}/index.html"
                 for filing in filings
-                if hasattr(filing, 'items') and '5.07' in filing.items and filing.filing_date.year == TARGET_YEAR
+                if hasattr(filing, 'items') and '5.07' in filing.items and filing.filing_date.year == 2024   #Hardcoded target_year for safety and to allow it to work
             ),
             f"https://www.sec.gov/Archives/edgar/data/{cik}/NotFound.htm",
-        )  # Default link
-
+        )
         return {
             "CIK": cik,
             "Company Name": company_name,
@@ -38,9 +36,6 @@ def process_company(cik):
     except Exception as e:
         st.error(f"Error processing CIK {cik}: {e}")
         return {"CIK": cik, "Company Name": "Error", "Form_5.07_Available": "Error", "Form_5.07_Link": None}
-
-# Streamlit App
-st.title("SEC Form 5.07 Checker")
 
 # Input Method Selection
 input_method = st.radio("Select Input Method:", ("Manual CIK Input", "Upload Excel File"))
@@ -55,18 +50,16 @@ if input_method == "Manual CIK Input":
             st.warning("Please enter at least one CIK.")
         else:
             with st.spinner("Processing..."):
-                results = [process_company(cik) for cik in ciks]  # Process all CIKs
+                results = [process_company(cik) for cik in ciks]
             df = pd.DataFrame(results)
             st.dataframe(df)
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False, sheet_name='Sheet1')
             st.download_button(
                 label="Download Results (Excel)",
-                data=output.getvalue(),
+                data=df.to_excel(index=False).encode('utf-8'),
                 file_name="sec_form_507_results.xlsx",
                 mime="application/vnd.ms-excel",
             )
+
 elif input_method == "Upload Excel File":
     uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx", "xls"])
 
@@ -80,14 +73,13 @@ elif input_method == "Upload Excel File":
                 results = [process_company(cik) for cik in ciks]
             df = pd.DataFrame(results)
             st.dataframe(df)
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False, sheet_name='Sheet1')
             st.download_button(
                 label="Download Results (Excel)",
-                data=output.getvalue(),
+                data=df.to_excel(index=False).encode('utf-8'),
                 file_name="sec_form_507_results.xlsx",
                 mime="application/vnd.ms-excel",
             )
         except Exception as e:
             st.error(f"Error processing file: {e}")
+
+# Make sure requirements.txt is correct
