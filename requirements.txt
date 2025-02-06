@@ -1,3 +1,4 @@
 streamlit
 pandas
-sec-edgar-downloader
+edgar
+openpyxl
