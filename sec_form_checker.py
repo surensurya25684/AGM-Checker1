@@ -13,7 +13,7 @@ TARGET_YEAR = 2024
 @st.cache  # Cache results for faster repeated execution
 def process_company(cik):
     try:
-        company = Company(str(cik))
+        company = Company(cik=cik)  # Ensure 'cik' is passed correctly
         company_name = company.name
         filings = company.get_filings(form="8-K")
         form_507_found = any(
