@@ -1,14 +1,12 @@
 import streamlit as st
 import pandas as pd
 import requests
-from secedgar.client import NetworkClient
-from secedgar.company import Company
 
 # Streamlit UI
 st.title("SEC Form 5.07 Checker")
 st.write("Check if a company has filed Form 5.07 (8-K Filings).")
 
-# User Email Input
+# User Email Input for SEC API Authentication
 user_email = st.text_input("Enter your email (used for SEC API authentication):", type="default")
 
 if user_email:
@@ -28,32 +26,43 @@ if st.button("Check Filings"):
         results = []
 
         def fetch_filings(cik):
-            """Fetch 8-K filings and check for Form 5.07 using user's email"""
-            client = NetworkClient(user_agent=user_email)
-            company = Company(str(cik), client=client)
-            filings = company.get_filings(form="8-K")
+            """Fetch 8-K filings and check for Form 5.07 using the SEC API"""
+            headers = {"User-Agent": user_email}
+            url = f"https://data.sec.gov/submissions/CIK{cik}.json"
 
-            form_507_found = False
-            form_507_link = None
+            response = requests.get(url, headers=headers)
 
-            for filing in filings:
-                try:
-                    if hasattr(filing, 'items') and '5.07' in filing.items:
-                        if hasattr(filing, 'filing_date'):
-                            filing_date = filing.filing_date.strftime('%Y-%m-%d')
-                            if filing_date.startswith("2024"):
-                                form_507_found = True
-                                formatted_accession_number = filing.accession_number.replace('-', '')
-                                form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.html"
-                                break
-                except Exception as e:
-                    st.warning(f"Error processing filing for CIK {cik}: {e}")
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Extract the latest 8-K filings
+                form_507_found = False
+                form_507_link = None
 
-            return {
-                "CIK": cik,
-                "Form_5.07_Available": "Yes" if form_507_found else "No",
-                "Form_5.07_Link": form_507_link if form_507_found else f"https://www.sec.gov/Archives/edgar/data/{cik}/NotFound.htm"
-            }
+                if "filings" in data and "recent" in data["filings"]:
+                    recent_filings = data["filings"]["recent"]
+                    form_types = recent_filings["form"]
+                    filing_dates = recent_filings["filingDate"]
+                    accession_numbers = recent_filings["accessionNumber"]
+
+                    for i, form in enumerate(form_types):
+                        if form == "8-K" and filing_dates[i].startswith("2024"):
+                            formatted_accession_number = accession_numbers[i].replace('-', '')
+                            form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.html"
+                            form_507_found = True
+                            break
+
+                return {
+                    "CIK": cik,
+                    "Form_5.07_Available": "Yes" if form_507_found else "No",
+                    "Form_5.07_Link": form_507_link if form_507_found else f"https://www.sec.gov/Archives/edgar/data/{cik}/NotFound.htm"
+                }
+            else:
+                return {
+                    "CIK": cik,
+                    "Form_5.07_Available": "Error",
+                    "Form_5.07_Link": None
+                }
 
         if uploaded_file:
             companies_df = pd.read_excel(uploaded_file)
