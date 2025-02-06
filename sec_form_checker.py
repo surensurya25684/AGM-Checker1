@@ -28,6 +28,7 @@ if st.button("Check Filings"):
         def fetch_filings(cik):
             """Fetch 8-K filings and check for Form 5.07 using the SEC API"""
             headers = {"User-Agent": user_email}
+            cik = str(cik).zfill(10)  # Ensure CIK is 10 digits
             url = f"https://data.sec.gov/submissions/CIK{cik}.json"
 
             response = requests.get(url, headers=headers)
@@ -58,6 +59,7 @@ if st.button("Check Filings"):
                     "Form_5.07_Link": form_507_link if form_507_found else f"https://www.sec.gov/Archives/edgar/data/{cik}/NotFound.htm"
                 }
             else:
+                st.error(f"Error fetching data for CIK {cik}: HTTP {response.status_code}")
                 return {
                     "CIK": cik,
                     "Form_5.07_Available": "Error",
