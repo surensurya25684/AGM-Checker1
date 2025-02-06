@@ -1,15 +1,16 @@
+import os
 import streamlit as st
 import pandas as pd
-from edgar import Company, set_identity
+from edgar import Company
 import io
 
 # Config
-email = st.text_area("email:" )
-set_identity(email)  # Replace with your email
+email = st.text_area("Email:")
+os.environ['EDGAR_IDENTITY'] = email  # Set the environment variable
 TARGET_YEAR = 2024
 
 # Function: Process Company (fetch name from Edgar)
-@st.cache_data  # Cache results for faster repeated execution
+@st.cache  # Cache results for faster repeated execution
 def process_company(cik):
     try:
         company = Company(str(cik))
@@ -38,7 +39,6 @@ def process_company(cik):
         st.error(f"Error processing CIK {cik}: {e}")
         return {"CIK": cik, "Company Name": "Error", "Form_5.07_Available": "Error", "Form_5.07_Link": None}
 
-
 # Streamlit App
 st.title("SEC Form 5.07 Checker")
 
@@ -58,9 +58,12 @@ if input_method == "Manual CIK Input":
                 results = [process_company(cik) for cik in ciks]  # Process all CIKs
             df = pd.DataFrame(results)
             st.dataframe(df)
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False, sheet_name='Sheet1')
             st.download_button(
                 label="Download Results (Excel)",
-                data=df.to_excel(index=False).encode('utf-8'),  # Simple excel conversion
+                data=output.getvalue(),
                 file_name="sec_form_507_results.xlsx",
                 mime="application/vnd.ms-excel",
             )
@@ -77,9 +80,12 @@ elif input_method == "Upload Excel File":
                 results = [process_company(cik) for cik in ciks]
             df = pd.DataFrame(results)
             st.dataframe(df)
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False, sheet_name='Sheet1')
             st.download_button(
                 label="Download Results (Excel)",
-                data=df.to_excel(index=False).encode('utf-8'),
+                data=output.getvalue(),
                 file_name="sec_form_507_results.xlsx",
                 mime="application/vnd.ms-excel",
             )
