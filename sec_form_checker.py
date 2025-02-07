@@ -1,123 +1,83 @@
 import streamlit as st
 import pandas as pd
-import requests
+from edgar import Company
+import io
 
-# Streamlit UI
+# Streamlit App
 st.title("SEC Form 5.07 Checker")
-st.write("Check if a company has filed Form 5.07 (8-K Filings).")
 
-# User Email Input for SEC API Authentication
-user_email = st.text_input("Enter your email (used for SEC API authentication):", type="default")
+# Helper Function
+@st.cache_data
+def process_company(cik):
+    """Processes a single company and returns the result, fetching company name from Edgar."""
+    try:
+        company = Company(cik)  # Only CIK is needed
+        company_name = company.name
+        filings = company.get_filings(form="8-K")
+        form_507_found = any(
+            hasattr(filing, 'items') and '5.07' in filing.items and filing.filing_date.year == 2024  #hardcoded target_year for safety and to allow it to work
+            for filing in filings
+        )
 
-if user_email:
-    st.success(f"Using {user_email} for SEC API requests.")
-
-# File Upload Option
-uploaded_file = st.file_uploader("Upload an Excel file (must contain a 'CIK' column)", type=["xlsx"])
-
-# Manual CIK Input
-manual_cik = st.text_input("Or enter a CIK number manually:")
-
-# Function to Fetch SEC Filings
-def fetch_filings(cik):
-    """Fetch 8-K filings and check for Form 5.07 using the SEC API"""
-    headers = {"User-Agent": user_email}
-    cik = str(cik).zfill(10)  # Ensure CIK is 10 digits
-    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-
-    response = requests.get(url, headers=headers)
-
-    if response.status_code == 200:
-        data = response.json()
-
-        # 🔹 Debug: Print SEC API Response
-        st.write(f"SEC API Response for CIK {cik}:", data)
-
-        # Extract the latest 8-K filings
-        form_507_found = False
-        form_507_link = None
-
-        if "filings" in data and "recent" in data["filings"]:
-            recent_filings = data["filings"]["recent"]
-            form_types = recent_filings["form"]
-            filing_dates = recent_filings["filingDate"]
-            accession_numbers = recent_filings["accessionNumber"]
-
-            for i, form in enumerate(form_types):
-                if form == "8-K" and filing_dates[i].startswith("2024"):
-                    formatted_accession_number = accession_numbers[i].replace('-', '')
-                    filing_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.json"
-
-                    # 🔹 Fetch filing details
-                    filing_response = requests.get(filing_url, headers=headers)
-
-                    if filing_response.status_code == 200:
-                        filing_data = filing_response.json()
-                        
-                        # 🔹 Debug: Print Filing JSON Data
-                        st.write(f"Checking 8-K Filing: {filing_url}")
-                        st.write(f"Filing JSON Data:", filing_data)
-
-                        # 🔹 Check if Item 5.07 is in the filing
-                        if "items" in filing_data and "5.07" in filing_data["items"]:
-                            form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.html"
-                            form_507_found = True
-                            break  # Stop once we find the first 5.07 filing
-
+        link = next(
+            (
+                f"https://www.sec.gov/Archives/edgar/data/{cik}/{filing.accession_number.replace('-', '')}/index.html"
+                for filing in filings
+                if hasattr(filing, 'items') and '5.07' in filing.items and filing.filing_date.year == 2024   #Hardcoded target_year for safety and to allow it to work
+            ),
+            f"https://www.sec.gov/Archives/edgar/data/{cik}/NotFound.htm",
+        )
         return {
             "CIK": cik,
+            "Company Name": company_name,
             "Form_5.07_Available": "Yes" if form_507_found else "No",
-            "Form_5.07_Link": form_507_link if form_507_found else f"https://www.sec.gov/Archives/edgar/data/{cik}/NotFound.htm"
+            "Form_5.07_Link": link,
         }
-    else:
-        st.error(f"Error fetching data for CIK {cik}: HTTP {response.status_code}")
-        return {
-            "CIK": cik,
-            "Form_5.07_Available": "Error",
-            "Form_5.07_Link": None
-        }
+    except Exception as e:
+        st.error(f"Error processing CIK {cik}: {e}")
+        return {"CIK": cik, "Company Name": "Error", "Form_5.07_Available": "Error", "Form_5.07_Link": None}
 
-# Process Data on Button Click
-if st.button("Check Filings"):
-    if not user_email:
-        st.error("Please enter your email to proceed.")
-    else:
-        results = []
+# Input Method Selection
+input_method = st.radio("Select Input Method:", ("Manual CIK Input", "Upload Excel File"))
 
-        if uploaded_file:
-            companies_df = pd.read_excel(uploaded_file)
-            companies_df.columns = companies_df.columns.str.strip()
+if input_method == "Manual CIK Input":
+    # Input: CIKs (comma-separated)
+    ciks_input = st.text_area("Enter CIKs (comma-separated):")
+    ciks = [cik.strip() for cik in ciks_input.split(',') if cik.strip()]
 
-            if 'CIK' not in companies_df.columns:
-                st.error("Uploaded file must contain a 'CIK' column.")
-            else:
-                st.write("Processing file...")
-
-                for index, row in companies_df.iterrows():
-                    cik = row.get('CIK', None)
-                    company_name = row.get('Company Name', 'Unknown')
-                    issuer_id = row.get('Issuer id', 'Unknown')
-                    analyst_name = row.get('Analyst name', 'Unknown')
-
-                    if cik:
-                        result = fetch_filings(cik)
-                        result.update({
-                            "Company Name": company_name,
-                            "Issuer ID": issuer_id,
-                            "Analyst Name": analyst_name
-                        })
-                        results.append(result)
-
-                results_df = pd.DataFrame(results)
-                st.dataframe(results_df)
-
-                # Provide download option
-                output_file = "output_results.xlsx"
-                results_df.to_excel(output_file, index=False)
-                st.download_button("Download Results as Excel", data=open(output_file, "rb"), file_name="output_results.xlsx")
-
-        elif manual_cik:
-            result = fetch_filings(manual_cik)
-            st.write(result)
+    if st.button("Check"):
+        if not ciks:
+            st.warning("Please enter at least one CIK.")
         else:
-            st.warning("Please upload a file or enter a CIK number.")
+            with st.spinner("Processing..."):
+                results = [process_company(cik) for cik in ciks]
+            df = pd.DataFrame(results)
+            st.dataframe(df)
+            st.download_button(
+                label="Download Results (Excel)",
+                data=df.to_excel(index=False).encode('utf-8'),
+                file_name="sec_form_507_results.xlsx",
+                mime="application/vnd.ms-excel",
+            )
+
+elif input_method == "Upload Excel File":
+    uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx", "xls"])
+
+    if uploaded_file is not None:
+        try:
+            df = pd.read_excel(uploaded_file)
+            df.columns = df.columns.str.strip()
+            ciks = df['CIK'].astype(str).tolist()
+
+            with st.spinner("Processing..."):
+                results = [process_company(cik) for cik in ciks]
+            df = pd.DataFrame(results)
+            st.dataframe(df)
+            st.download_button(
+                label="Download Results (Excel)",
+                data=df.to_excel(index=False).encode('utf-8'),
+                file_name="sec_form_507_results.xlsx",
+                mime="application/vnd.ms-excel",
+            )
+        except Exception as e:
+            st.error(f"Error processing file: {e}")
