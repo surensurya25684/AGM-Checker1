@@ -1,3 +1,4 @@
 streamlit
 pandas
-python-edgar
+requests
+beautifulsoup4
