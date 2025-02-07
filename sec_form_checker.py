@@ -1,13 +1,13 @@
 import streamlit as st
 import pandas as pd
-from edgar import Company, set_identity
+from sec_api import SecAPI
 
 # Streamlit UI
 st.title("SEC Form 5.07 Checker")
 st.write("Check if a company has filed Form 5.07 (8-K Filings).")
 
-# Set your identity (replace with your email address)
-identity = st.text_input("Enter your email (used for SEC API authentication):", type="default")
+# SEC API Key Input
+sec_api_key = st.text_input("Enter your SEC API key:", type="password")
 
 # Input Method Selection
 input_method = st.radio("Select Input Method:", ("Manual CIK Input", "Upload Excel File"))
@@ -36,55 +36,46 @@ else:
     ciks = []  # Initialize ciks to an empty list
 
 
-def check_form_507(cik):
-    """Checks for Form 5.07 filing for a given CIK."""
+def check_form_507(cik, sec_api_key):
+    """Checks for Form 5.07 filing for a given CIK using the SEC API."""
+    sec_api = SecAPI(api_key=sec_api_key)
+
+    query = {
+      "query": { "query_string": {
+          "query": f"formType:\"8-K\" AND item:\"5.07\" AND cikNumber:{cik}"
+      }},
+        "from": "0",
+        "size": "1",
+        "sort": [{ "filedAt": { "order": "desc" } }]
+    }
+
     try:
-        # Initialize the company object using CIK number
-        company = Company(cik)
-
-        # Get all 8-K filings
-        filings = company.get_filings(form="8-K")
-
-        # Filter for Form 5.07 within the retrieved 8-K filings for the year 2024
-        form_507_found = False
-        form_507_link = None
-
-        for filing in filings:
-            try:
-                if hasattr(filing, 'items') and '5.07' in filing.items:
-                    if hasattr(filing, 'filing_date'):
-                        filing_date = filing.filing_date.strftime('%Y-%m-%d')
-                        if filing_date.startswith("2024"):
-                            form_507_found = True
-
-                            # Format Accession Number Correctly
-                            formatted_accession_number = filing.accession_number.replace('-', '')
-
-                            # Construct the correct SEC URL
-                            form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.html"
-                            break  # Exit loop as soon as we find one match
-            except Exception as e:
-                st.error(f"Error processing filing for CIK {cik}: {e}")
-                return "Error", None
-
-        return form_507_found, form_507_link
+        response = sec_api.query(query)
+        # Check if any filings were found
+        if response and response['total']['value'] > 0:
+            filing = response['filings'][0]
+            accession_number = filing['accessionNumber'].replace('-', '')
+            form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_number}/index.html"
+            return True, form_507_link
+        else:
+            return False, f"https://www.sec.gov/Archives/edgar/data/{cik}/NotFound.htm"
 
     except Exception as e:
         st.error(f"Error processing company with CIK {cik}: {e}")
         return "Error", None
 
+
 # Process Data on Button Click
 if st.button("Check Filings"):
-    if not identity:
-        st.error("Please enter your email to proceed.")
+    if not sec_api_key:
+        st.error("Please enter your SEC API key to proceed.")
     elif not ciks:
         st.warning("Please enter at least one CIK or upload a file.")
     else:
-        set_identity(identity)
         results = []
         with st.spinner("Processing..."):
             for cik in ciks:
-                form_507_found, form_507_link = check_form_507(cik)
+                form_507_found, form_507_link = check_form_507(cik, sec_api_key)
                 if form_507_found == "Error":
                     results.append({
                         "CIK": cik,
@@ -97,6 +88,7 @@ if st.button("Check Filings"):
                         "Form_5.07_Available": "Yes" if form_507_found else "No",
                         "Form_5.07_Link": form_507_link if form_507_found else f"https://www.sec.gov/Archives/edgar/data/{cik}/NotFound.htm"
                     })
+
         results_df = pd.DataFrame(results)
         st.dataframe(results_df)
 
