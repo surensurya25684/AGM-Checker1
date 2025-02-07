@@ -9,6 +9,12 @@ import random
 st.title("SEC Form 5.07 Checker")
 st.write("Check if a company has filed Form 5.07 (8-K Filings).")
 
+# User Email Input for SEC API Authentication
+user_email = st.text_input("Enter your email (used for SEC API authentication - used as User-Agent):", type="default")
+
+if user_email:
+    st.success(f"Using {user_email} for SEC API requests.")
+
 # Input Method Selection
 input_method = st.radio("Select Input Method:", ("Manual CIK Input", "Upload Excel File"))
 
@@ -37,22 +43,10 @@ else:
 
 
 @st.cache_data(show_spinner=False)
-def fetch_filings(cik):
+def fetch_filings(cik, user_email):
     """Fetch 8-K filings and scan for Form 5.07 using SEC API and HTML parsing"""
-
-    # List of User Agents - Rotate through these
-    user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:91.0) Gecko/20100101 Firefox/91.0",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:91.0) Gecko/20100101 Firefox/91.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36",
-        # Add more user agents here
-    ]
-    user_agent = random.choice(user_agents)  # Select a random user agent
-
     headers = {
-        "User-Agent": user_agent,
+        "User-Agent": user_email, #Use the user_email this time as the User Agent
         "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
         "Connection": "keep-alive"
@@ -79,8 +73,8 @@ def fetch_filings(cik):
                         if document_link and filing_date.startswith("2024"):
                             document_url = "https://www.sec.gov" + document_link['href']
 
-                            # Add a delay before fetching the document content
-                            time.sleep(random.uniform(1, 3)) #Randomize it slightly
+                            # Add a significant, randomized delay
+                            time.sleep(random.uniform(3, 7))
 
                             document_response = requests.get(document_url, headers=headers, timeout=10)
                             document_response.raise_for_status()
@@ -97,12 +91,14 @@ def fetch_filings(cik):
 
 # Process Data on Button Click
 if st.button("Check Filings"):
-    if not ciks:
+    if not user_email:
+        st.error("Please enter your email to proceed.")
+    elif not ciks:
         st.warning("Please enter at least one CIK or upload a file.")
     else:
         results = []
         for cik in ciks:
-            result = fetch_filings(cik)
+            result = fetch_filings(cik, user_email) #Pass the user_email here
             results.append(result)
 
         results_df = pd.DataFrame(results)
