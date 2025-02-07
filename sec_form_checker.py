@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+import time
 
 # Streamlit UI - Title and Instructions
 st.title("SEC Form 5.07 Checker")
@@ -19,6 +20,22 @@ uploaded_file = st.file_uploader("Upload an Excel file (must contain a 'CIK' col
 # Manual CIK Input
 manual_cik = st.text_input("Or enter a single CIK number manually:")
 
+# SEC API Request with Retry
+def make_sec_request(url, headers, max_retries=3):
+    """Handles SEC API rate limits by retrying requests."""
+    for attempt in range(max_retries):
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            return response
+        elif response.status_code == 429:  # Too many requests
+            wait_time = (attempt + 1) * 5  # Wait 5s, then 10s, then 15s
+            st.warning(f"Rate limit hit. Retrying in {wait_time} seconds...")
+            time.sleep(wait_time)
+        else:
+            st.error(f"SEC API error: HTTP {response.status_code} - {response.text}")
+            return None
+    return None
+
 # Function to Fetch and Scan SEC Filings for Item 5.07
 def fetch_filings(cik, user_email):
     """Fetch 8-K filings and scan for Form 5.07 using SEC API and HTML parsing"""
@@ -26,72 +43,70 @@ def fetch_filings(cik, user_email):
     cik = str(cik).zfill(10)  # Ensure CIK is 10 digits
     url = f"https://data.sec.gov/submissions/CIK{cik}.json"
 
-    response = requests.get(url, headers=headers)
+    response = make_sec_request(url, headers)
+    if response is None:
+        return {"CIK": cik, "Form_5.07_Available": "Error", "Form_5.07_Link": None}
 
-    if response.status_code == 200:
-        data = response.json()
+    data = response.json()
 
-        # Extract the latest 8-K filings
-        form_507_found = False
-        form_507_link = None
+    # Extract the latest 8-K filings
+    form_507_found = False
+    form_507_link = None
 
-        if "filings" in data and "recent" in data["filings"]:
-            recent_filings = data["filings"]["recent"]
-            form_types = recent_filings["form"]
-            filing_dates = recent_filings["filingDate"]
-            accession_numbers = recent_filings["accessionNumber"]
+    if "filings" in data and "recent" in data["filings"]:
+        recent_filings = data["filings"]["recent"]
+        form_types = recent_filings["form"]
+        filing_dates = recent_filings["filingDate"]
+        accession_numbers = recent_filings["accessionNumber"]
 
-            for i, form in enumerate(form_types):
-                if form == "8-K" and filing_dates[i].startswith("2024"):
-                    formatted_accession_number = accession_numbers[i].replace('-', '')
+        for i, form in enumerate(form_types):
+            if form == "8-K" and filing_dates[i].startswith("2024"):
+                formatted_accession_number = accession_numbers[i].replace('-', '')
 
-                    # Extract filing document links
-                    filing_index_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.json"
+                # Extract filing document links
+                filing_index_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.json"
 
-                    # Fetch filing details JSON
-                    filing_index_response = requests.get(filing_index_url, headers=headers)
+                # Fetch filing details JSON
+                filing_index_response = make_sec_request(filing_index_url, headers)
+                if filing_index_response is None:
+                    continue  # Skip to next filing
 
-                    if filing_index_response.status_code == 200:
-                        filing_data = filing_index_response.json()
+                filing_data = filing_index_response.json()
 
-                        # Check all available documents in the filing
-                        documents = filing_data.get("directory", {}).get("item", [])
+                # Check all available documents in the filing
+                documents = filing_data.get("directory", {}).get("item", [])
 
-                        for doc in documents:
-                            doc_name = doc["name"]
-                            doc_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/{doc_name}"
+                for doc in documents:
+                    doc_name = doc["name"]
+                    doc_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/{doc_name}"
 
-                            # Check content type before parsing
-                            doc_response = requests.get(doc_url, headers=headers)
+                    # Check content type before parsing
+                    doc_response = make_sec_request(doc_url, headers)
+                    if doc_response is None:
+                        continue  # Skip this document
 
-                            if doc_response.status_code == 200 and "text/html" in doc_response.headers.get("Content-Type", ""):
-                                try:
-                                    # Parse HTML safely
-                                    soup = BeautifulSoup(doc_response.text, "lxml")
-                                    filing_text = soup.get_text().lower()
+                    content_type = doc_response.headers.get("Content-Type", "")
+                    if "text/html" in content_type:
+                        try:
+                            # Parse HTML safely
+                            soup = BeautifulSoup(doc_response.text, "lxml")
+                            filing_text = soup.get_text().lower()
 
-                                    if "item 5.07" in filing_text:
-                                        form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.html"
-                                        form_507_found = True
-                                        break  # Stop once we find the first 5.07 filing
-                                except Exception as e:
-                                    st.error(f"Error parsing HTML document: {doc_url} - {e}")
+                            if "item 5.07" in filing_text:
+                                form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.html"
+                                form_507_found = True
+                                break  # Stop once we find the first 5.07 filing
+                        except Exception as e:
+                            st.error(f"Error parsing HTML document: {doc_url} - {e}")
 
-                    if form_507_found:
-                        break  # Stop once we find the first 5.07 filing
+                if form_507_found:
+                    break  # Stop once we find the first 5.07 filing
 
-        return {
-            "CIK": cik,
-            "Form_5.07_Available": "Yes" if form_507_found else "No",
-            "Form_5.07_Link": form_507_link if form_507_found else f"https://www.sec.gov/Archives/edgar/data/{cik}/NotFound.htm"
-        }
-    else:
-        st.error(f"Error fetching data for CIK {cik}: HTTP {response.status_code}")
-        return {
-            "CIK": cik,
-            "Form_5.07_Available": "Error",
-            "Form_5.07_Link": None
-        }
+    return {
+        "CIK": cik,
+        "Form_5.07_Available": "Yes" if form_507_found else "No",
+        "Form_5.07_Link": form_507_link if form_507_found else f"https://www.sec.gov/Archives/edgar/data/{cik}/NotFound.htm"
+    }
 
 # Process Data on Button Click
 if st.button("Check Filings"):
