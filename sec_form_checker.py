@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 import time
-import re
+import random
 
 # Streamlit UI
 st.title("SEC Form 5.07 Checker")
@@ -35,24 +35,39 @@ elif input_method == "Upload Excel File":
 else:
     ciks = []  # Initialize ciks to an empty list
 
-@st.cache_data(show_spinner=False) #Added cache and took out spinner from fetch filing since its already there
+
+@st.cache_data(show_spinner=False)
 def fetch_filings(cik):
     """Fetch 8-K filings and scan for Form 5.07 using SEC API and HTML parsing"""
+
+    # List of User Agents - Rotate through these
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:91.0) Gecko/20100101 Firefox/91.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:91.0) Gecko/20100101 Firefox/91.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36",
+        # Add more user agents here
+    ]
+    user_agent = random.choice(user_agents)  # Select a random user agent
+
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36", #Static user agent for this project to take out the reliance on the user email
+        "User-Agent": user_agent,
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive"
     }
+
     cik = str(cik).zfill(10)
-    base_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=8-K&dateb=&owner=exclude&count=100" #Look for 8k and filter from that
+    base_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=8-K&dateb=&owner=exclude&count=100"
+
     try:
-        with st.spinner(f"Fetching filings for CIK: {cik}"): #Added spinner for the user
+        with st.spinner(f"Fetching filings for CIK: {cik}"):
             response = requests.get(base_url, headers=headers, timeout=10)
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
 
-            # This parsing logic needs to be adapted based on the actual HTML structure
-            # of the EDGAR search results page. This example assumes a table structure.
-
-            table = soup.find('table', class_='tableFile2')  # Adapt class name if needed
+            table = soup.find('table', class_='tableFile2')
             if table:
                 for row in table.find_all('tr'):
                     cells = row.find_all('td')
@@ -60,10 +75,14 @@ def fetch_filings(cik):
                         description = cells[1].text.strip().lower()
                         filing_date = cells[2].text.strip()
                         document_link = cells[3].find('a', href=True)
-                        if document_link and filing_date.startswith("2024"): #Added the filing date for only the year 2024
+
+                        if document_link and filing_date.startswith("2024"):
                             document_url = "https://www.sec.gov" + document_link['href']
-                            #Checking document Link here
-                            document_response = requests.get(document_url)
+
+                            # Add a delay before fetching the document content
+                            time.sleep(random.uniform(1, 3)) #Randomize it slightly
+
+                            document_response = requests.get(document_url, headers=headers, timeout=10)
                             document_response.raise_for_status()
                             document_soup = BeautifulSoup(document_response.content, 'html.parser')
                             document_text = document_soup.get_text().lower()
@@ -71,6 +90,7 @@ def fetch_filings(cik):
                             if "item 5.07" in document_text:
                                 return {"CIK": cik, "Form_5.07_Available": "Yes", "Form_5.07_Link":document_url}
             return {"CIK": cik,"Form_5.07_Available": "No", "Form_5.07_Link": 'N/A'}
+
     except requests.exceptions.RequestException as e:
         st.error(f"Scraping error for CIK {cik}: {e}")
         return {"CIK": cik, "Form_5.07_Available": "Error", "Form_5.07_Link": None}
