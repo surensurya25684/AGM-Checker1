@@ -40,13 +40,31 @@ def check_form_507(cik, api_key):
     """Checks for Form 5.07 filings using the API-Ninjas API."""
     base_url = "https://api.api-ninjas.com/v1/sec"  # API-Ninjas SEC API endpoint
 
+    #Try to find Ticker
+    ticker_url = f"https://api.api-ninjas.com/v1/company?cik={cik}" # get the ticker from cik.
+    try:
+        response = requests.get(ticker_url, headers={'X-Api-Key': api_key})
+        response.raise_for_status()  # Raise an exception for bad status codes
+        ticker_data = response.json()
+        if ticker_data:
+            ticker = ticker_data[0]['symbol']
+        else:
+            st.error(f"Could not find ticker for CIK {cik}")
+            return []
+    except Exception as e:
+        st.error(f"Error while accessing API-Ninjas Ticker API: {e}")
+        return []
+    
     # Construct the API request URL
-    url = f"{base_url}?ticker={cik}&filing=8-K"  # API ninjas uses the ticker, not CIK
+    url = f"{base_url}?ticker={ticker}&filing=8-K"
+    st.write(url) #printing the URL, and see any problems
+
     try:
         response = requests.get(url, headers={'X-Api-Key': api_key})
         response.raise_for_status()  # Raise an exception for bad status codes
 
         data = response.json()
+        st.write(data) #printing the data, and see any problems
 
         # Adapt this part depending on API-Ninjas response structure
         links = []
