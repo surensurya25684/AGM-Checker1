@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+import random
 import time
 
 # Streamlit UI - Title and Instructions
@@ -20,25 +21,40 @@ uploaded_file = st.file_uploader("Upload an Excel file (must contain a 'CIK' col
 # Manual CIK Input
 manual_cik = st.text_input("Or enter a single CIK number manually:")
 
-# SEC API Request with Retry
-def make_sec_request(url, headers, max_retries=3):
-    """Handles SEC API rate limits by retrying requests."""
+# Free Proxy List (Update this regularly)
+PROXY_LIST = [
+    "http://103.152.112.100:80",
+    "http://47.243.89.15:8080",
+    "http://103.152.112.60:80",
+    "http://103.216.103.39:80",
+]
+
+def get_random_proxy():
+    """Selects a random proxy from the list"""
+    proxy = random.choice(PROXY_LIST)
+    return {"http": proxy, "https": proxy}
+
+def make_sec_request(url, headers, max_retries=5):
+    """Handles SEC API rate limits by rotating proxies and retrying requests."""
+    wait_time = 10  # Start with 10 seconds
     for attempt in range(max_retries):
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            return response
-        elif response.status_code == 429:  # Too many requests
-            wait_time = (attempt + 1) * 5  # Wait 5s, then 10s, then 15s
-            st.warning(f"Rate limit hit. Retrying in {wait_time} seconds...")
-            time.sleep(wait_time)
-        else:
-            st.error(f"SEC API error: HTTP {response.status_code} - {response.text}")
-            return None
+        proxy = get_random_proxy()
+        try:
+            response = requests.get(url, headers=headers, proxies=proxy, timeout=10)
+            if response.status_code == 200:
+                return response
+            elif response.status_code == 429:  # Too many requests
+                st.warning(f"Rate limit hit. Retrying in {wait_time} seconds with a new proxy...")
+                time.sleep(wait_time)
+                wait_time *= 2  # Exponential backoff
+        except requests.exceptions.RequestException:
+            st.warning("Proxy failed. Trying a new one...")
+            time.sleep(5)
+    st.error("Failed to connect to SEC API after multiple attempts.")
     return None
 
-# Function to Fetch and Scan SEC Filings for Item 5.07
 def fetch_filings(cik, user_email):
-    """Fetch 8-K filings and scan for Form 5.07 using SEC API and HTML parsing"""
+    """Fetch 8-K filings and scan for Form 5.07 using SEC API, rotating proxies, and HTML parsing."""
     headers = {"User-Agent": user_email}
     cik = str(cik).zfill(10)  # Ensure CIK is 10 digits
     url = f"https://data.sec.gov/submissions/CIK{cik}.json"
@@ -108,7 +124,6 @@ def fetch_filings(cik, user_email):
         "Form_5.07_Link": form_507_link if form_507_found else f"https://www.sec.gov/Archives/edgar/data/{cik}/NotFound.htm"
     }
 
-# Process Data on Button Click
 if st.button("Check Filings"):
     if not user_email:
         st.error("Please enter your email to proceed.")
@@ -126,17 +141,9 @@ if st.button("Check Filings"):
 
                 for index, row in companies_df.iterrows():
                     cik = row.get('CIK', None)
-                    company_name = row.get('Company Name', 'Unknown')
-                    issuer_id = row.get('Issuer id', 'Unknown')
-                    analyst_name = row.get('Analyst name', 'Unknown')
 
                     if cik:
                         result = fetch_filings(cik, user_email)
-                        result.update({
-                            "Company Name": company_name,
-                            "Issuer ID": issuer_id,
-                            "Analyst Name": analyst_name
-                        })
                         results.append(result)
 
                 results_df = pd.DataFrame(results)
