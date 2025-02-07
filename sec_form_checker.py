@@ -1,13 +1,13 @@
 import streamlit as st
 import pandas as pd
-from sec_api import SecAPI
+import requests
 
 # Streamlit UI
 st.title("SEC Form 5.07 Checker")
 st.write("Check if a company has filed Form 5.07 (8-K Filings).")
 
-# SEC API Key Input
-sec_api_key = st.text_input("Enter your SEC API key:", type="password") # Add your api key
+# API-Ninjas API Key Input
+api_ninjas_api_key = st.text_input("Enter your API-Ninjas API Key:", type="password")
 
 # Input Method Selection
 input_method = st.radio("Select Input Method:", ("Manual CIK Input", "Upload Excel File"))
@@ -35,45 +35,47 @@ elif input_method == "Upload Excel File":
 else:
     ciks = []  # Initialize ciks to an empty list
 
-def check_form_507(cik, sec_api_key):
-    """Checks for Form 5.07 filings in 2024 using the SEC API."""
-    sec_api = SecAPI(api_key=sec_api_key) # Add your api key
 
-    query = {
-        "query": f"formType:\"8-K\" AND item:\"5.07\" AND cikNumber:{cik} AND filedAt:[2024-01-01 TO 2024-12-31]",
-        "from": "0",
-        "size": "100",  # Get up to 100 filings
-        "sort": [{"filedAt": {"order": "desc"}}]
-    }
+def check_form_507(cik, api_key):
+    """Checks for Form 5.07 filings using the API-Ninjas API."""
+    base_url = "https://api.api-ninjas.com/v1/sec"  # API-Ninjas SEC API endpoint
 
+    # Construct the API request URL
+    url = f"{base_url}?ticker={cik}&filing=8-K"  # API ninjas uses the ticker, not CIK
     try:
-        response = sec_api.query(query)
-        filings = response.get('filings', [])  # Safely get the filings list
+        response = requests.get(url, headers={'X-Api-Key': api_key})
+        response.raise_for_status()  # Raise an exception for bad status codes
 
-        # Extract links from the filings
+        data = response.json()
+
+        # Adapt this part depending on API-Ninjas response structure
         links = []
-        for filing in filings:
-            accession_number = filing['accessionNumber'].replace('-', '')
-            form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_number}/index.html"
-            links.append(form_507_link)
-
+        for filing in data:  # Assuming the response is a list of filings
+            #From API-Ninjas, the links are .documents
+            form_507_link = filing.get('documents')  # URL is within the 'documents' field
+            if form_507_link:
+                links.append(form_507_link)
         return links
 
-    except Exception as e:
-        st.error(f"Error processing company with CIK {cik}: {e}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error while accessing API-Ninjas API: {e}")
         return []
+    except Exception as e:
+        st.error(f"Error processing the API-Ninjas API response: {e}")
+        return []
+
 
 # Process Data on Button Click
 if st.button("Check Filings"):
-    if not sec_api_key:
-        st.error("Please enter your SEC API key to proceed.")
+    if not api_ninjas_api_key:
+        st.error("Please enter your API-Ninjas API key to proceed.")
     elif not ciks:
         st.warning("Please enter at least one CIK or upload a file.")
     else:
         results = []
         with st.spinner("Processing..."):
             for cik in ciks:
-                links = check_form_507(cik, sec_api_key)
+                links = check_form_507(cik, api_ninjas_api_key)
 
                 if links:
                     for link in links:
@@ -86,7 +88,7 @@ if st.button("Check Filings"):
                     results.append({
                         "CIK": cik,
                         "Form_5.07_Available": "No",
-                        "Form_5.07_Link": "No 5.07 filings found in 2024"
+                        "Form_5.07_Link": "No 5.07 filings found"
                     })
 
         results_df = pd.DataFrame(results)
