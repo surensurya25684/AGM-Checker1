@@ -44,23 +44,37 @@ def fetch_filings(cik, user_email):
             for i, form in enumerate(form_types):
                 if form == "8-K" and filing_dates[i].startswith("2024"):
                     formatted_accession_number = accession_numbers[i].replace('-', '')
-                    filing_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.html"
 
-                    # Extract filing document link
-                    filing_html_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/primary-document.html"
+                    # Extract filing document links
+                    filing_index_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.json"
 
-                    # Fetch filing HTML
-                    filing_html_response = requests.get(filing_html_url, headers=headers)
+                    # Fetch filing details JSON
+                    filing_index_response = requests.get(filing_index_url, headers=headers)
 
-                    if filing_html_response.status_code == 200:
-                        # Parse HTML and check for "Item 5.07"
-                        soup = BeautifulSoup(filing_html_response.text, "html.parser")
-                        filing_text = soup.get_text().lower()
+                    if filing_index_response.status_code == 200:
+                        filing_data = filing_index_response.json()
 
-                        if "item 5.07" in filing_text:
-                            form_507_link = filing_url
-                            form_507_found = True
-                            break  # Stop once we find the first 5.07 filing
+                        # Check all available documents in the filing
+                        documents = filing_data.get("directory", {}).get("item", [])
+
+                        for doc in documents:
+                            doc_name = doc["name"]
+                            doc_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/{doc_name}"
+
+                            # Fetch document text
+                            doc_response = requests.get(doc_url, headers=headers)
+
+                            if doc_response.status_code == 200:
+                                soup = BeautifulSoup(doc_response.text, "html.parser")
+                                filing_text = soup.get_text().lower()
+
+                                if "item 5.07" in filing_text:
+                                    form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.html"
+                                    form_507_found = True
+                                    break  # Stop once we find the first 5.07 filing
+
+                    if form_507_found:
+                        break  # Stop once we find the first 5.07 filing
 
         return {
             "CIK": cik,
