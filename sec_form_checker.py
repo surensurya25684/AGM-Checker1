@@ -61,17 +61,21 @@ def fetch_filings(cik, user_email):
                             doc_name = doc["name"]
                             doc_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/{doc_name}"
 
-                            # Fetch document text
+                            # Check content type before parsing
                             doc_response = requests.get(doc_url, headers=headers)
 
-                            if doc_response.status_code == 200:
-                                soup = BeautifulSoup(doc_response.text, "html.parser")
-                                filing_text = soup.get_text().lower()
+                            if doc_response.status_code == 200 and "text/html" in doc_response.headers.get("Content-Type", ""):
+                                try:
+                                    # Parse HTML safely
+                                    soup = BeautifulSoup(doc_response.text, "lxml")
+                                    filing_text = soup.get_text().lower()
 
-                                if "item 5.07" in filing_text:
-                                    form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.html"
-                                    form_507_found = True
-                                    break  # Stop once we find the first 5.07 filing
+                                    if "item 5.07" in filing_text:
+                                        form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.html"
+                                        form_507_found = True
+                                        break  # Stop once we find the first 5.07 filing
+                                except Exception as e:
+                                    st.error(f"Error parsing HTML document: {doc_url} - {e}")
 
                     if form_507_found:
                         break  # Stop once we find the first 5.07 filing
