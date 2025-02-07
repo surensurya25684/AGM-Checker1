@@ -1,11 +1,13 @@
 import streamlit as st
 import pandas as pd
-import requests
-from bs4 import BeautifulSoup
+from sec_api import SecAPI
 
 # Streamlit UI
 st.title("SEC Form 5.07 Checker")
 st.write("Check if a company has filed Form 5.07 (8-K Filings).")
+
+# SEC API Key Input
+sec_api_key = st.text_input("Enter your SEC API key:", type="password") # Add your api key
 
 # Input Method Selection
 input_method = st.radio("Select Input Method:", ("Manual CIK Input", "Upload Excel File"))
@@ -33,53 +35,63 @@ elif input_method == "Upload Excel File":
 else:
     ciks = []  # Initialize ciks to an empty list
 
+def check_form_507(cik, sec_api_key):
+    """Checks for Form 5.07 filings in 2024 using the SEC API."""
+    sec_api = SecAPI(api_key=sec_api_key) # Add your api key
 
-def check_form_507(cik):
-    """Checks for Form 5.07 filing for a given CIK, and tries to automate the manual check."""
-
-    cik_str = str(cik).zfill(10)  # CIKs need to be 10 digits
-
-    # Construct the EDGAR search URL
-    edgar_search_url = f"https://www.sec.gov/edgar/search/#/q=formType%253A%25228-K%2522%20AND%20item%253A%25225.07%2522%20AND%20cikNumber%253A%2522{cik_str}%2522&dateRange=all&category=custom&entityName=CIK{cik_str}&forms=8-K"
+    query = {
+        "query": f"formType:\"8-K\" AND item:\"5.07\" AND cikNumber:{cik} AND filedAt:[2024-01-01 TO 2024-12-31]",
+        "from": "0",
+        "size": "100",  # Get up to 100 filings
+        "sort": [{"filedAt": {"order": "desc"}}]
+    }
 
     try:
-        response = requests.get(edgar_search_url)
-        response.raise_for_status()  # Raise an exception for bad status codes
+        response = sec_api.query(query)
+        filings = response.get('filings', [])  # Safely get the filings list
 
-        soup = BeautifulSoup(response.content, "html.parser")
+        # Extract links from the filings
+        links = []
+        for filing in filings:
+            accession_number = filing['accessionNumber'].replace('-', '')
+            form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_number}/index.html"
+            links.append(form_507_link)
 
-        # Check if any results are displayed on the page
-        no_results_element = soup.find("div", class_="no-results")
-        if no_results_element:
-            #If No results found
-            return edgar_search_url, "No"
-        else:
-            #If results were found
-            return edgar_search_url, "Yes"
+        return links
 
-    except requests.exceptions.RequestException as e:
-        st.error(f"Error while scraping EDGAR: {e}")
-        return edgar_search_url, "Error"
+    except Exception as e:
+        st.error(f"Error processing company with CIK {cik}: {e}")
+        return []
 
 # Process Data on Button Click
 if st.button("Check Filings"):
-    if not ciks:
+    if not sec_api_key:
+        st.error("Please enter your SEC API key to proceed.")
+    elif not ciks:
         st.warning("Please enter at least one CIK or upload a file.")
     else:
         results = []
-        for cik in ciks:
-            edgar_search_url, availability = check_form_507(cik)
+        with st.spinner("Processing..."):
+            for cik in ciks:
+                links = check_form_507(cik, sec_api_key)
 
-            results.append({
-                "CIK": cik,
-                "Form_5.07_Available": availability,
-                "Form_5.07_Link": f"[{edgar_search_url}]({edgar_search_url})",
-                "Instructions": "Click the link to manually *VERIFY* the 5.07 filing on EDGAR."
-            })
+                if links:
+                    for link in links:
+                        results.append({
+                            "CIK": cik,
+                            "Form_5.07_Available": "Yes",
+                            "Form_5.07_Link": link
+                        })
+                else:
+                    results.append({
+                        "CIK": cik,
+                        "Form_5.07_Available": "No",
+                        "Form_5.07_Link": "No 5.07 filings found in 2024"
+                    })
 
         results_df = pd.DataFrame(results)
         st.dataframe(results_df, column_config={
-            "Form_5.07_Link": st.column_config.LinkColumn("EDGAR Search Link")
+            "Form_5.07_Link": st.column_config.LinkColumn("EDGAR Filing Link")
         })
 
         # Provide download option
