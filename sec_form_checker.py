@@ -4,7 +4,7 @@ import requests
 import time
 
 # Financial Modeling Prep API Key (Get a free API key at https://financialmodelingprep.com/)
-FMP_API_KEY = "YOUR_API_KEY"
+FMP_API_KEY = "7AolfkavNdvbTFnX3eIRUrXAIiIoIyIA"
 
 # Streamlit UI - Title and Instructions
 st.title("SEC Form 5.07 Checker")
