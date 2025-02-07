@@ -1,19 +1,13 @@
 import streamlit as st
 import pandas as pd
-import requests
-from bs4 import BeautifulSoup
-import time
-import random
+from edgar import Company, set_identity
 
 # Streamlit UI
 st.title("SEC Form 5.07 Checker")
 st.write("Check if a company has filed Form 5.07 (8-K Filings).")
 
-# User Email Input for SEC API Authentication
-user_email = st.text_input("Enter your email (used for SEC API authentication - used as User-Agent):", type="default")
-
-if user_email:
-    st.success(f"Using {user_email} for SEC API requests.")
+# Set your identity (replace with your email address)
+identity = st.text_input("Enter your email (used for SEC API authentication):", type="default")
 
 # Input Method Selection
 input_method = st.radio("Select Input Method:", ("Manual CIK Input", "Upload Excel File"))
@@ -42,65 +36,67 @@ else:
     ciks = []  # Initialize ciks to an empty list
 
 
-@st.cache_data(show_spinner=False)
-def fetch_filings(cik, user_email):
-    """Fetch 8-K filings and scan for Form 5.07 using SEC API and HTML parsing"""
-    headers = {
-        "User-Agent": user_email, #Use the user_email this time as the User Agent
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive"
-    }
-
-    cik = str(cik).zfill(10)
-    base_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=8-K&dateb=&owner=exclude&count=100"
-
+def check_form_507(cik):
+    """Checks for Form 5.07 filing for a given CIK."""
     try:
-        with st.spinner(f"Fetching filings for CIK: {cik}"):
-            response = requests.get(base_url, headers=headers, timeout=10)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.content, 'html.parser')
+        # Initialize the company object using CIK number
+        company = Company(cik)
 
-            table = soup.find('table', class_='tableFile2')
-            if table:
-                for row in table.find_all('tr'):
-                    cells = row.find_all('td')
-                    if len(cells) > 3:
-                        description = cells[1].text.strip().lower()
-                        filing_date = cells[2].text.strip()
-                        document_link = cells[3].find('a', href=True)
+        # Get all 8-K filings
+        filings = company.get_filings(form="8-K")
 
-                        if document_link and filing_date.startswith("2024"):
-                            document_url = "https://www.sec.gov" + document_link['href']
+        # Filter for Form 5.07 within the retrieved 8-K filings for the year 2024
+        form_507_found = False
+        form_507_link = None
 
-                            # Add a significant, randomized delay
-                            time.sleep(random.uniform(3, 7))
+        for filing in filings:
+            try:
+                if hasattr(filing, 'items') and '5.07' in filing.items:
+                    if hasattr(filing, 'filing_date'):
+                        filing_date = filing.filing_date.strftime('%Y-%m-%d')
+                        if filing_date.startswith("2024"):
+                            form_507_found = True
 
-                            document_response = requests.get(document_url, headers=headers, timeout=10)
-                            document_response.raise_for_status()
-                            document_soup = BeautifulSoup(document_response.content, 'html.parser')
-                            document_text = document_soup.get_text().lower()
+                            # Format Accession Number Correctly
+                            formatted_accession_number = filing.accession_number.replace('-', '')
 
-                            if "item 5.07" in document_text:
-                                return {"CIK": cik, "Form_5.07_Available": "Yes", "Form_5.07_Link":document_url}
-            return {"CIK": cik,"Form_5.07_Available": "No", "Form_5.07_Link": 'N/A'}
+                            # Construct the correct SEC URL
+                            form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.html"
+                            break  # Exit loop as soon as we find one match
+            except Exception as e:
+                st.error(f"Error processing filing for CIK {cik}: {e}")
+                return "Error", None
 
-    except requests.exceptions.RequestException as e:
-        st.error(f"Scraping error for CIK {cik}: {e}")
-        return {"CIK": cik, "Form_5.07_Available": "Error", "Form_5.07_Link": None}
+        return form_507_found, form_507_link
+
+    except Exception as e:
+        st.error(f"Error processing company with CIK {cik}: {e}")
+        return "Error", None
 
 # Process Data on Button Click
 if st.button("Check Filings"):
-    if not user_email:
+    if not identity:
         st.error("Please enter your email to proceed.")
     elif not ciks:
         st.warning("Please enter at least one CIK or upload a file.")
     else:
+        set_identity(identity)
         results = []
-        for cik in ciks:
-            result = fetch_filings(cik, user_email) #Pass the user_email here
-            results.append(result)
-
+        with st.spinner("Processing..."):
+            for cik in ciks:
+                form_507_found, form_507_link = check_form_507(cik)
+                if form_507_found == "Error":
+                    results.append({
+                        "CIK": cik,
+                        "Form_5.07_Available": "Error",
+                        "Form_5.07_Link": "Error"
+                    })
+                else:
+                    results.append({
+                        "CIK": cik,
+                        "Form_5.07_Available": "Yes" if form_507_found else "No",
+                        "Form_5.07_Link": form_507_link if form_507_found else f"https://www.sec.gov/Archives/edgar/data/{cik}/NotFound.htm"
+                    })
         results_df = pd.DataFrame(results)
         st.dataframe(results_df)
 
