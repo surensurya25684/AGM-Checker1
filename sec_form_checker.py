@@ -1,118 +1,76 @@
-import pandas as pd
 import streamlit as st
-from edgar import Company, set_identity
-from io import BytesIO
+import pandas as pd
 
-# Streamlit UI Layout
-st.title("SEC Form 5.07 Finder")
+st.set_page_config(page_title="Vote Results Comparator", layout="wide")
+st.title("📊 Shareholder Vote Comparison Tool")
 
-# **Step 1: User Input for Identity**
-st.sidebar.header("User Settings")
-email = st.sidebar.text_input("Enter your email for SEC identity:", placeholder="example@domain.com")
+st.markdown("Upload two Excel/CSV files with shareholder vote data to find mismatches in vote results by proposal text.")
 
-# Set the identity only if an email is provided
-if email:
-    set_identity(email)
-    st.sidebar.success("Identity set successfully!")
+# Upload base and comparison files
+base_file = st.file_uploader("Upload Base File", type=["csv", "xlsx"], key="base")
+comparison_file = st.file_uploader("Upload Comparison File", type=["csv", "xlsx"], key="comp")
 
-# **Step 2: Upload Excel File**
-uploaded_file = st.file_uploader("Upload Excel file containing companies (with CIK column):", type=['xlsx'])
-
-# **Step 3: Manual CIK Input**
-manual_cik = st.text_input("Or enter a CIK number manually:", placeholder="Enter CIK number")
-
-# **Step 4: Process File**
-if uploaded_file or manual_cik:
-    results = []
-
-    # If file is uploaded, read data
-    if uploaded_file:
-        companies_df = pd.read_excel(uploaded_file)
-
-        # Strip whitespace from column names
-        companies_df.columns = companies_df.columns.str.strip()
-
-        # Check required columns
-        if 'CIK' not in companies_df.columns:
-            st.error("Error: The uploaded file must contain a 'CIK' column.")
+if base_file and comparison_file:
+    # Load files
+    def load_file(uploaded_file):
+        if uploaded_file.name.endswith(".csv"):
+            return pd.read_csv(uploaded_file)
         else:
-            st.success("File uploaded successfully!")
-            process_list = companies_df.to_dict(orient='records')  # Convert to list of dictionaries
+            return pd.read_excel(uploaded_file)
 
+    df_base = load_file(base_file)
+    df_comp = load_file(comparison_file)
+
+    # Required columns
+    id_columns = ["DMX_ISSUER_ID", "DMX_ISSUER_NAME", "Proposal Text (SHPPROPOSALTEXT)"]
+    vote_columns = [
+        'Vote Results - For (SHPVOTESYES)',
+        'Vote Results - Against (SHPVOTESNO)',
+        'Vote Results - Abstained (SHPVOTESABSTAINED)',
+        'Vote Results - Withheld (SHPVOTESWITHHELD)',
+        'Vote Results - Broker Non-Votes (SHPVOTESBROKERNONVOTES)',
+        'Proposal Vote Results: Total (SHPVOTESTOTAL)'
+    ]
+
+    try:
+        df_base = df_base[id_columns + vote_columns]
+        df_comp = df_comp[id_columns + vote_columns]
+    except KeyError:
+        st.error("One or both files are missing required columns. Please verify the template.")
     else:
-        process_list = [{"CIK": manual_cik, "Company Name": "Manual Entry", "Issuer id": "N/A", "Analyst name": "N/A"}]
+        # Merge by Proposal Text
+        merged = pd.merge(df_base, df_comp, on='Proposal Text (SHPPROPOSALTEXT)', suffixes=('_base', '_comp'))
 
-    # **Step 5: Process Each Company**
-    for row in process_list:
-        cik = row.get('CIK', None)
-        company_name = row.get('Company Name', 'Unknown')
-        issuer_id = row.get('Issuer id', 'Unknown')
-        analyst_name = row.get('Analyst name', 'Unknown')
+        # Detect mismatches
+        mismatch_rows = []
+        for col in vote_columns:
+            base_col = f"{col}_base"
+            comp_col = f"{col}_comp"
+            mismatches = merged[merged[base_col] != merged[comp_col]][[
+                'DMX_ISSUER_ID_base', 'DMX_ISSUER_NAME_base', 'Proposal Text (SHPPROPOSALTEXT)', base_col, comp_col
+            ]].copy()
+            mismatches.columns = [
+                'DMX_ISSUER_ID', 'DMX_ISSUER_NAME', 'Proposal Text', 'Base File Value', 'Comparison File Value'
+            ]
+            mismatches['Field'] = col
+            mismatches['Is Vote Mismatch'] = 'Yes'
+            mismatch_rows.append(mismatches)
 
-        if not cik:
-            st.warning(f"Skipping row: No CIK found.")
-            results.append({
-                "CIK": "Unknown",
-                "Company Name": company_name,
-                "Issuer ID": issuer_id,
-                "Analyst Name": analyst_name,
-                "Form_5.07_Available": "No CIK Found",
-                "Form_5.07_Link": "Not Available"
-            })
-            continue
+        result_df = pd.concat(mismatch_rows, ignore_index=True) if mismatch_rows else pd.DataFrame()
 
-        st.write(f"Processing CIK: {cik} ({company_name})...")
+        if not result_df.empty:
+            st.success(f"Found {len(result_df)} mismatched vote entries.")
+            st.dataframe(result_df, use_container_width=True)
 
-        try:
-            company = Company(cik)
-            filings = company.get_filings(form="8-K")
+            # Download link
+            def convert_df(df):
+                return df.to_excel(index=False, engine='openpyxl')
 
-            form_507_found = False
-            form_507_link = None
-
-            for filing in filings:
-                if hasattr(filing, 'items') and '5.07' in filing.items:
-                    if hasattr(filing, 'filing_date'):
-                        filing_date = filing.filing_date.strftime('%Y-%m-%d')
-                        if filing_date.startswith("2024"):
-                            form_507_found = True
-                            formatted_accession_number = filing.accession_number.replace('-', '')
-                            form_507_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{formatted_accession_number}/index.html"
-                            break  
-
-            results.append({
-                "CIK": cik,
-                "Company Name": company_name,
-                "Issuer ID": issuer_id,
-                "Analyst Name": analyst_name,
-                "Form_5.07_Available": "Yes" if form_507_found else "No",
-                "Form_5.07_Link": form_507_link if form_507_found else f"https://www.sec.gov/Archives/edgar/data/{cik}/NotFound.htm"
-            })
-
-        except Exception as e:
-            st.error(f"Error processing CIK {cik}: {e}")
-            results.append({
-                "CIK": cik,
-                "Company Name": company_name,
-                "Issuer ID": issuer_id,
-                "Analyst Name": analyst_name,
-                "Form_5.07_Available": "Error",
-                "Form_5.07_Link": None
-            })
-
-    # **Step 6: Display Results**
-    results_df = pd.DataFrame(results)
-    st.dataframe(results_df)
-
-    # **Step 7: Provide Download Link**
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        results_df.to_excel(writer, index=False)
-    output.seek(0)
-
-    st.download_button(
-        label="Download Results as Excel",
-        data=output,
-        file_name="Form_5.07_Results.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+            st.download_button(
+                label="📥 Download Mismatch Report",
+                data=convert_df(result_df),
+                file_name="vote_mismatches_report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.info("No vote mismatches found between the files.")
