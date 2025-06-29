@@ -1,4 +1,4 @@
 pandas 
-edgar 
+requests
 streamlit 
 xlsxwriter
