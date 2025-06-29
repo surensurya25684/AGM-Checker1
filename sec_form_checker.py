@@ -1,76 +1,89 @@
 import streamlit as st
 import pandas as pd
+import requests
+import os
+from datetime import datetime
 
-st.set_page_config(page_title="Vote Results Comparator", layout="wide")
-st.title("📊 Shareholder Vote Comparison Tool")
+# === CONFIGURATION ===
+TRACKER_FILE = r"C:\Users\surysur\OneDrive\MSCI Office 365\DOC - Governance & EDM - dummy\Duplicate tracker.xlsx"
 
-st.markdown("Upload two Excel/CSV files with shareholder vote data to find mismatches in vote results by proposal text.")
+# === Helper: Clean and normalize Issuer IDs ===
+def clean_id_column(series):
+    return series.astype(str).str.replace(r"\s+", "", regex=True).str.strip().str.upper()
 
-# Upload base and comparison files
-base_file = st.file_uploader("Upload Base File", type=["csv", "xlsx"], key="base")
-comparison_file = st.file_uploader("Upload Comparison File", type=["csv", "xlsx"], key="comp")
-
-if base_file and comparison_file:
-    # Load files
-    def load_file(uploaded_file):
-        if uploaded_file.name.endswith(".csv"):
-            return pd.read_csv(uploaded_file)
-        else:
-            return pd.read_excel(uploaded_file)
-
-    df_base = load_file(base_file)
-    df_comp = load_file(comparison_file)
-
-    # Required columns
-    id_columns = ["DMX_ISSUER_ID", "DMX_ISSUER_NAME", "Proposal Text (SHPPROPOSALTEXT)"]
-    vote_columns = [
-        'Vote Results - For (SHPVOTESYES)',
-        'Vote Results - Against (SHPVOTESNO)',
-        'Vote Results - Abstained (SHPVOTESABSTAINED)',
-        'Vote Results - Withheld (SHPVOTESWITHHELD)',
-        'Vote Results - Broker Non-Votes (SHPVOTESBROKERNONVOTES)',
-        'Proposal Vote Results: Total (SHPVOTESTOTAL)'
-    ]
-
+# === Load tracker data ===
+@st.cache_data
+def load_tracker(file_path):
     try:
-        df_base = df_base[id_columns + vote_columns]
-        df_comp = df_comp[id_columns + vote_columns]
-    except KeyError:
-        st.error("One or both files are missing required columns. Please verify the template.")
+        df = pd.read_excel(file_path)
+        df["DMX issuer id"] = clean_id_column(df["DMX issuer id"])
+        return df
+    except Exception as e:
+        st.error(f"❌ Failed to load tracker: {e}")
+        return pd.DataFrame()
+
+# === Send results to Teams via webhook ===
+def send_to_teams(merged_df, webhook_url):
+    if merged_df.empty:
+        message = {"text": "📣 Issuer Lookup: No matching Issuer IDs found."}
     else:
-        # Merge by Proposal Text
-        merged = pd.merge(df_base, df_comp, on='Proposal Text (SHPPROPOSALTEXT)', suffixes=('_base', '_comp'))
+        rows = [
+            f"- {row['DMX_ISSUER_ID']} → {row['Profiler'] if pd.notnull(row['Profiler']) else 'Not Found'}"
+            for _, row in merged_df.iterrows()
+        ]
+        message = {"text": f"📣 *Issuer Lookup Results:*\n" + "\n".join(rows)}
 
-        # Detect mismatches
-        mismatch_rows = []
-        for col in vote_columns:
-            base_col = f"{col}_base"
-            comp_col = f"{col}_comp"
-            mismatches = merged[merged[base_col] != merged[comp_col]][[
-                'DMX_ISSUER_ID_base', 'DMX_ISSUER_NAME_base', 'Proposal Text (SHPPROPOSALTEXT)', base_col, comp_col
-            ]].copy()
-            mismatches.columns = [
-                'DMX_ISSUER_ID', 'DMX_ISSUER_NAME', 'Proposal Text', 'Base File Value', 'Comparison File Value'
-            ]
-            mismatches['Field'] = col
-            mismatches['Is Vote Mismatch'] = 'Yes'
-            mismatch_rows.append(mismatches)
+    headers = {"Content-Type": "application/json"}
+    response = requests.post(webhook_url, json=message, headers=headers)
 
-        result_df = pd.concat(mismatch_rows, ignore_index=True) if mismatch_rows else pd.DataFrame()
+    if response.status_code == 200:
+        st.success("✅ Message sent to Teams.")
+    else:
+        st.error(f"❌ Failed to send to Teams: {response.status_code} - {response.text}")
 
-        if not result_df.empty:
-            st.success(f"Found {len(result_df)} mismatched vote entries.")
-            st.dataframe(result_df, use_container_width=True)
+# === UI ===
+st.title("🔍 Multiple Issuer ID → Profiler Lookup")
 
-            # Download link
-            def convert_df(df):
-                return df.to_excel(index=False, engine='openpyxl')
+tracker_df = load_tracker(TRACKER_FILE)
 
-            st.download_button(
-                label="📥 Download Mismatch Report",
-                data=convert_df(result_df),
-                file_name="vote_mismatches_report.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        else:
-            st.info("No vote mismatches found between the files.")
+# Show file modification timestamp
+try:
+    modified_time = os.path.getmtime(TRACKER_FILE)
+    readable_time = datetime.fromtimestamp(modified_time).strftime("%d-%b-%Y %H:%M:%S")
+    st.info(f"📂 Tracker last modified on: **{readable_time}**")
+except Exception as e:
+    st.warning(f"⚠️ Could not retrieve file modification time: {e}")
+
+# Input
+user_input = st.text_area("Enter DMX Issuer IDs (comma or newline separated):", height=150)
+
+if user_input:
+    raw_ids = user_input.replace(",", "\n").splitlines()
+    issuer_ids = [id.strip() for id in raw_ids if id.strip()]
+    input_df = pd.DataFrame({"DMX_ISSUER_ID": issuer_ids})
+    input_df["DMX_ISSUER_ID"] = clean_id_column(input_df["DMX_ISSUER_ID"])
+
+    # Merge with tracker
+    merged_df = pd.merge(
+        input_df,
+        tracker_df[["DMX issuer id", "Profiler"]],
+        left_on="DMX_ISSUER_ID",
+        right_on="DMX issuer id",
+        how="left"
+    )
+    merged_df = merged_df[["DMX_ISSUER_ID", "Profiler"]]
+    merged_df["Profiler"].fillna("Not Found", inplace=True)
+
+    # Display
+    st.subheader("📊 Results")
+    st.dataframe(merged_df, use_container_width=True)
+
+    # Download
+    csv = merged_df.to_csv(index=False)
+    st.download_button("📥 Download as CSV", csv, "issuer_lookup_results.csv", "text/csv")
+
+    # Optional webhook
+    webhook_url = st.text_input("Optional: Enter Microsoft Teams Webhook URL to send results", type="password")
+    if webhook_url:
+        if st.button("📨 Send to Teams"):
+            send_to_teams(merged_df, webhook_url)
