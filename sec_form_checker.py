@@ -5,30 +5,24 @@ import os
 from datetime import datetime
 
 # === CONFIGURATION ===
-TRACKER_FILE = r"C:\Users\surysur\OneDrive\MSCI Office 365\DOC - Governance & EDM - dummy\Duplicate tracker.xlsx"
-import os
+LOCAL_TRACKER_PATH = r"C:\Users\surysur\OneDrive\MSCI Office 365\DOC - Governance & EDM - dummy\Duplicate tracker.xlsx"
 
-path = r"C:\Users\surysur\OneDrive\MSCI Office 365\DOC - Governance & EDM - dummy\Duplicate tracker.xlsx"
-print("Exists:", os.path.exists(path))
-print("Is file:", os.path.isfile(path))
-
-
-# === Clean and normalize Issuer IDs ===
+# === Clean Issuer IDs ===
 def clean_id_column(series):
     return series.astype(str).str.replace(r"\s+", "", regex=True).str.strip().str.upper()
 
-# === Load tracker from OneDrive path ===
+# === Load tracker from any source ===
 @st.cache_data
-def load_tracker(file_path):
+def load_tracker_from_file(file):
     try:
-        df = pd.read_excel(file_path)
+        df = pd.read_excel(file)
         df["DMX issuer id"] = clean_id_column(df["DMX issuer id"])
         return df
     except Exception as e:
         st.error(f"❌ Failed to load tracker: {e}")
         return pd.DataFrame()
 
-# === Send results to Microsoft Teams via Webhook ===
+# === Send results to Teams ===
 def send_to_teams(merged_df, webhook_url):
     if merged_df.empty:
         message = {"text": "📣 Issuer Lookup: No matching Issuer IDs found."}
@@ -47,52 +41,64 @@ def send_to_teams(merged_df, webhook_url):
     else:
         st.error(f"❌ Failed to send to Teams: {response.status_code} - {response.text}")
 
-# === Streamlit App ===
+# === UI ===
 st.set_page_config(page_title="Issuer Lookup", layout="wide")
 st.title("🔍 Issuer ID → Profiler Lookup")
 
-# Load and display tracker status
-tracker_df = load_tracker(TRACKER_FILE)
+# === Tracker loading logic ===
+tracker_df = pd.DataFrame()
+tracker_source = ""
 
-try:
-    modified_time = os.path.getmtime(TRACKER_FILE)
-    readable_time = datetime.fromtimestamp(modified_time).strftime("%d-%b-%Y %H:%M:%S")
-    st.info(f"📂 Tracker last modified on: **{readable_time}**")
-except Exception as e:
-    st.warning(f"⚠️ Could not get file timestamp: {e}")
+if os.path.exists(LOCAL_TRACKER_PATH):
+    tracker_df = load_tracker_from_file(LOCAL_TRACKER_PATH)
+    tracker_source = "📁 Loaded from local path"
+    try:
+        mod_time = os.path.getmtime(LOCAL_TRACKER_PATH)
+        readable_time = datetime.fromtimestamp(mod_time).strftime("%d-%b-%Y %H:%M:%S")
+        tracker_source += f" — last modified: **{readable_time}**"
+    except:
+        pass
+else:
+    uploaded_file = st.file_uploader("📤 Upload 'Duplicate tracker.xlsx'", type=["xlsx"])
+    if uploaded_file:
+        tracker_df = load_tracker_from_file(uploaded_file)
+        tracker_source = "📤 Loaded from uploaded file"
 
-# Input section
-user_input = st.text_area("Enter one or more DMX Issuer IDs (comma or newline separated):", height=150)
+if not tracker_df.empty:
+    st.success(tracker_source)
 
-if user_input:
-    # Parse and clean input
-    raw_ids = user_input.replace(",", "\n").splitlines()
-    issuer_ids = [id.strip() for id in raw_ids if id.strip()]
-    input_df = pd.DataFrame({"DMX_ISSUER_ID": issuer_ids})
-    input_df["DMX_ISSUER_ID"] = clean_id_column(input_df["DMX_ISSUER_ID"])
+    user_input = st.text_area("Enter DMX Issuer IDs (comma or newline separated):", height=150)
 
-    # Match input with tracker
-    merged_df = pd.merge(
-        input_df,
-        tracker_df[["DMX issuer id", "Profiler"]],
-        left_on="DMX_ISSUER_ID",
-        right_on="DMX issuer id",
-        how="left"
-    )
+    if user_input:
+        raw_ids = user_input.replace(",", "\n").splitlines()
+        issuer_ids = [id.strip() for id in raw_ids if id.strip()]
+        input_df = pd.DataFrame({"DMX_ISSUER_ID": issuer_ids})
+        input_df["DMX_ISSUER_ID"] = clean_id_column(input_df["DMX_ISSUER_ID"])
 
-    merged_df = merged_df[["DMX_ISSUER_ID", "Profiler"]]
-    merged_df["Profiler"].fillna("Not Found", inplace=True)
+        # Merge with tracker
+        merged_df = pd.merge(
+            input_df,
+            tracker_df[["DMX issuer id", "Profiler"]],
+            left_on="DMX_ISSUER_ID",
+            right_on="DMX issuer id",
+            how="left"
+        )
 
-    # Display results
-    st.subheader("📊 Results")
-    st.dataframe(merged_df, use_container_width=True)
+        merged_df = merged_df[["DMX_ISSUER_ID", "Profiler"]]
+        merged_df["Profiler"].fillna("Not Found", inplace=True)
 
-    # Download option
-    csv = merged_df.to_csv(index=False)
-    st.download_button("📥 Download as CSV", csv, "issuer_lookup_results.csv", "text/csv")
+        # Display results
+        st.subheader("📊 Lookup Results")
+        st.dataframe(merged_df, use_container_width=True)
 
-    # Optional Teams integration
-    webhook_url = st.text_input("Optional: Enter Microsoft Teams Webhook URL", type="password")
-    if webhook_url:
-        if st.button("📨 Send to Teams"):
-            send_to_teams(merged_df, webhook_url)
+        # Download button
+        csv = merged_df.to_csv(index=False)
+        st.download_button("📥 Download as CSV", csv, "issuer_lookup_results.csv", "text/csv")
+
+        # Optional Teams integration
+        webhook_url = st.text_input("Optional: Enter Microsoft Teams Webhook URL", type="password")
+        if webhook_url:
+            if st.button("📨 Send to Teams"):
+                send_to_teams(merged_df, webhook_url)
+else:
+    st.warning("📂 Please upload the tracker file or make sure the local file exists.")
