@@ -6,6 +6,12 @@ from datetime import datetime
 
 # === CONFIGURATION ===
 TRACKER_FILE = r"C:\Users\surysur\OneDrive\MSCI Office 365\DOC - Governance & EDM - dummy\Duplicate tracker.xlsx"
+import os
+
+path = r"C:\Users\surysur\OneDrive\MSCI Office 365\DOC - Governance & EDM - dummy\Duplicate tracker.xlsx"
+print("Exists:", os.path.exists(path))
+print("Is file:", os.path.isfile(path))
+
 
 # === Clean and normalize Issuer IDs ===
 def clean_id_column(series):
