@@ -1,104 +1,93 @@
 import streamlit as st
 import pandas as pd
-import requests
-import os
-from datetime import datetime
+from fuzzywuzzy import fuzz
+from io import BytesIO
 
-# === CONFIGURATION ===
-LOCAL_TRACKER_PATH = r"C:\Users\surysur\OneDrive\MSCI Office 365\DOC - Governance & EDM - dummy\Duplicate tracker.xlsx"
+st.set_page_config(page_title="Excel Validator", layout="centered")
 
-# === Clean Issuer IDs ===
-def clean_id_column(series):
-    return series.astype(str).str.replace(r"\s+", "", regex=True).str.strip().str.upper()
+st.title("🔍 Excel File Validator")
+st.write("Match records based on **Company Name** and **Proposal Text** using fuzzy logic.")
 
-# === Load tracker from any source ===
-@st.cache_data
-def load_tracker_from_file(file):
-    try:
-        df = pd.read_excel(file)
-        df["DMX issuer id"] = clean_id_column(df["DMX issuer id"])
-        return df
-    except Exception as e:
-        st.error(f"❌ Failed to load tracker: {e}")
-        return pd.DataFrame()
+# Upload files
+file1 = st.file_uploader("Upload File 1 (Excel)", type=["xlsx"])
+file2 = st.file_uploader("Upload File 2 (Excel)", type=["xlsx"])
 
-# === Send results to Teams ===
-def send_to_teams(merged_df, webhook_url):
-    if merged_df.empty:
-        message = {"text": "📣 Issuer Lookup: No matching Issuer IDs found."}
-    else:
-        rows = [
-            f"- {row['DMX_ISSUER_ID']} → {row['Profiler'] if pd.notnull(row['Profiler']) else 'Not Found'}"
-            for _, row in merged_df.iterrows()
-        ]
-        message = {"text": f"📣 *Issuer Lookup Results:*\n" + "\n".join(rows)}
+threshold = st.slider("Matching Threshold", 70, 100, 85)
 
-    headers = {"Content-Type": "application/json"}
-    response = requests.post(webhook_url, json=message, headers=headers)
+def validate_files(df1, df2, threshold):
+    company_col = 'Company Name'
+    proposal_col = 'Proposal Text'
+    matches = []
+    unmatched_file1 = []
+    unmatched_file2 = df2.copy()
 
-    if response.status_code == 200:
-        st.success("✅ Message sent to Teams.")
-    else:
-        st.error(f"❌ Failed to send to Teams: {response.status_code} - {response.text}")
+    for _, row1 in df1.iterrows():
+        best_match = None
+        best_score = 0
+        best_idx = None
 
-# === UI ===
-st.set_page_config(page_title="Issuer Lookup", layout="wide")
-st.title("🔍 Issuer ID → Profiler Lookup")
+        for idx2, row2 in unmatched_file2.iterrows():
+            company_score = fuzz.token_sort_ratio(str(row1[company_col]), str(row2[company_col]))
+            proposal_score = fuzz.token_sort_ratio(str(row1[proposal_col]), str(row2[proposal_col]))
+            avg_score = (company_score + proposal_score) / 2
 
-# === Tracker loading logic ===
-tracker_df = pd.DataFrame()
-tracker_source = ""
+            if avg_score > best_score:
+                best_score = avg_score
+                best_match = row2
+                best_idx = idx2
 
-if os.path.exists(LOCAL_TRACKER_PATH):
-    tracker_df = load_tracker_from_file(LOCAL_TRACKER_PATH)
-    tracker_source = "📁 Loaded from local path"
-    try:
-        mod_time = os.path.getmtime(LOCAL_TRACKER_PATH)
-        readable_time = datetime.fromtimestamp(mod_time).strftime("%d-%b-%Y %H:%M:%S")
-        tracker_source += f" — last modified: **{readable_time}**"
-    except:
-        pass
-else:
-    uploaded_file = st.file_uploader("📤 Upload 'Duplicate tracker.xlsx'", type=["xlsx"])
-    if uploaded_file:
-        tracker_df = load_tracker_from_file(uploaded_file)
-        tracker_source = "📤 Loaded from uploaded file"
+        if best_score >= threshold:
+            matches.append({
+                'File1_Company': row1[company_col],
+                'File2_Company': best_match[company_col],
+                'File1_Proposal': row1[proposal_col],
+                'File2_Proposal': best_match[proposal_col],
+                'Match Score': best_score
+            })
+            unmatched_file2 = unmatched_file2.drop(index=best_idx)
+        else:
+            unmatched_file1.append(row1)
 
-if not tracker_df.empty:
-    st.success(tracker_source)
+    return pd.DataFrame(matches), pd.DataFrame(unmatched_file1), unmatched_file2
 
-    user_input = st.text_area("Enter DMX Issuer IDs (comma or newline separated):", height=150)
+def to_excel(matches_df, unmatched1_df, unmatched2_df):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        matches_df.to_excel(writer, index=False, sheet_name='Matches')
+        unmatched1_df.to_excel(writer, index=False, sheet_name='Unmatched_File1')
+        unmatched2_df.to_excel(writer, index=False, sheet_name='Unmatched_File2')
+    output.seek(0)
+    return output
 
-    if user_input:
-        raw_ids = user_input.replace(",", "\n").splitlines()
-        issuer_ids = [id.strip() for id in raw_ids if id.strip()]
-        input_df = pd.DataFrame({"DMX_ISSUER_ID": issuer_ids})
-        input_df["DMX_ISSUER_ID"] = clean_id_column(input_df["DMX_ISSUER_ID"])
+# Process
+if file1 and file2:
+    df1 = pd.read_excel(file1)
+    df2 = pd.read_excel(file2)
 
-        # Merge with tracker
-        merged_df = pd.merge(
-            input_df,
-            tracker_df[["DMX issuer id", "Profiler"]],
-            left_on="DMX_ISSUER_ID",
-            right_on="DMX issuer id",
-            how="left"
+    # Validate required columns
+    if 'Company Name' in df1.columns and 'Proposal Text' in df1.columns and \
+       'Company Name' in df2.columns and 'Proposal Text' in df2.columns:
+
+        st.success("✅ Files uploaded. Starting comparison...")
+        matches_df, unmatched1_df, unmatched2_df = validate_files(df1, df2, threshold)
+
+        st.subheader("🔗 Matches")
+        st.dataframe(matches_df.head())
+
+        st.subheader("❌ Unmatched Rows (File 1)")
+        st.dataframe(unmatched1_df.head())
+
+        st.subheader("❌ Unmatched Rows (File 2)")
+        st.dataframe(unmatched2_df.head())
+
+        excel_file = to_excel(matches_df, unmatched1_df, unmatched2_df)
+        st.download_button(
+            label="📥 Download Result Excel",
+            data=excel_file,
+            file_name="validation_result.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        merged_df = merged_df[["DMX_ISSUER_ID", "Profiler"]]
-        merged_df["Profiler"].fillna("Not Found", inplace=True)
+    else:
+        st.error("⚠️ Both files must contain 'Company Name' and 'Proposal Text' columns.")
 
-        # Display results
-        st.subheader("📊 Lookup Results")
-        st.dataframe(merged_df, use_container_width=True)
-
-        # Download button
-        csv = merged_df.to_csv(index=False)
-        st.download_button("📥 Download as CSV", csv, "issuer_lookup_results.csv", "text/csv")
-
-        # Optional Teams integration
-        webhook_url = st.text_input("Optional: Enter Microsoft Teams Webhook URL", type="password")
-        if webhook_url:
-            if st.button("📨 Send to Teams"):
-                send_to_teams(merged_df, webhook_url)
-else:
-    st.warning("📂 Please upload the tracker file or make sure the local file exists.")
