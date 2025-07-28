@@ -15,8 +15,8 @@ file2 = st.file_uploader("Upload File 2 (Excel)", type=["xlsx"])
 threshold = st.slider("Matching Threshold", 70, 100, 85)
 
 def validate_files(df1, df2, threshold):
-    company_col = 'Company Name'
-    proposal_col = 'Proposal Text'
+    company_col = 'DMX_ISSUER_NAME'
+    proposal_col = 'SHPPROPOSALTEXT'
     matches = []
     unmatched_file1 = []
     unmatched_file2 = df2.copy()
