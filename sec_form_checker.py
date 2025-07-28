@@ -6,12 +6,13 @@ from io import BytesIO
 st.set_page_config(page_title="Excel Validator", layout="centered")
 
 st.title("🔍 Excel File Validator")
-st.write("Match records based on **Company Name** and **Proposal Text** using fuzzy logic.")
+st.write("Match records using **DMX_ISSUER_NAME** and **SHPPROPOSALTEXT** columns with fuzzy logic.")
 
 # Upload files
 file1 = st.file_uploader("Upload File 1 (Excel)", type=["xlsx"])
 file2 = st.file_uploader("Upload File 2 (Excel)", type=["xlsx"])
 
+# Slider to adjust the fuzzy matching threshold
 threshold = st.slider("Matching Threshold", 70, 100, 85)
 
 def validate_files(df1, df2, threshold):
@@ -59,14 +60,13 @@ def to_excel(matches_df, unmatched1_df, unmatched2_df):
     output.seek(0)
     return output
 
-# Process
+# Main logic
 if file1 and file2:
     df1 = pd.read_excel(file1)
     df2 = pd.read_excel(file2)
 
-    # Validate required columns
-    if 'Company Name' in df1.columns and 'Proposal Text' in df1.columns and \
-       'Company Name' in df2.columns and 'Proposal Text' in df2.columns:
+    if 'DMX_ISSUER_NAME' in df1.columns and 'SHPPROPOSALTEXT' in df1.columns and \
+       'DMX_ISSUER_NAME' in df2.columns and 'SHPPROPOSALTEXT' in df2.columns:
 
         st.success("✅ Files uploaded. Starting comparison...")
         matches_df, unmatched1_df, unmatched2_df = validate_files(df1, df2, threshold)
@@ -87,7 +87,5 @@ if file1 and file2:
             file_name="validation_result.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
     else:
-        st.error("⚠️ Both files must contain 'Company Name' and 'Proposal Text' columns.")
-
+        st.error("⚠️ One or both files do not contain required columns: 'DMX_ISSUER_NAME' and 'SHPPROPOSALTEXT'")
