@@ -18,7 +18,7 @@ def load_and_prepare(file):
 
 # === Main Comparison Function ===
 def hierarchical_compare(df1, df2):
-    required_cols = ["DMX_ISSUER_ID", "SHPPROPOSALTEXT", "DMX_ISSUER_NAME"]
+    required_cols = ["DMX_ISSUER_ID", "Proposal Text (SHPPROPOSALTEXT)", "DMX_ISSUER_NAME"]
 
     for col in required_cols:
         if col not in df1.columns or col not in df2.columns:
@@ -37,8 +37,8 @@ def hierarchical_compare(df1, df2):
         group2 = issuers_file2.get_group(issuer_id)
 
         # Step 2: Match by Proposal Text within issuer
-        proposals1 = group1.groupby("SHPPROPOSALTEXT")
-        proposals2 = group2.groupby("SHPPROPOSALTEXT")
+        proposals1 = group1.groupby("Proposal Text (SHPPROPOSALTEXT)")
+        proposals2 = group2.groupby("Proposal Text (SHPPROPOSALTEXT)")
 
         common_proposals = proposals1.groups.keys() & proposals2.groups.keys()
 
@@ -50,7 +50,7 @@ def hierarchical_compare(df1, df2):
 
             # Step 3: Compare all other columns (excluding match keys)
             for col in df1.columns:
-                if col in ["DMX_ISSUER_ID", "SHPPROPOSALTEXT"]:
+                if col in ["DMX_ISSUER_ID", "Proposal Text (SHPPROPOSALTEXT)"]:
                     continue
                 if col in df2.columns:
                     val1 = row1.get(col, "")
@@ -95,3 +95,4 @@ if file1 and file2:
 
     except Exception as e:
         st.error(f"❌ Error: {e}")
+
