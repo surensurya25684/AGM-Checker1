@@ -12,9 +12,20 @@ file2 = st.file_uploader("Upload Second Excel File", type=["xlsx", "xls"])
 
 # === Normalization Function ===
 def load_and_prepare(file):
-    df = pd.read_excel(file, dtype=str)
+    df = pd.read_excel(file)
+
+    # Normalize column names
     df.columns = df.columns.str.strip().str.upper()
-    df = df.applymap(lambda x: str(x).strip().lower() if pd.notnull(x) else "")
+
+    # Clean each column properly
+    for col in df.columns:
+        if "VOTE" in col or "RESULT" in col or "COUNT" in col:  
+            # Force numeric for vote-related columns
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        else:
+            # Keep text normalized
+            df[col] = df[col].astype(str).str.strip().str.lower()
+
     return df
 
 
@@ -102,15 +113,31 @@ def hierarchical_compare(df1, df2):
                 if col in df2.columns:
                     val1 = row1.get(col, "")
                     val2 = row2.get(col, "")
-                    if val1 != val2:
-                        mismatches.append({
-                            "DMX_ISSUER_ID": issuer_id,
-                            "DMX_ISSUER_NAME": issuer_name1,
-                            "MISMATCHED_COLUMN": col,
-                            "VALUE_IN_FILE1": val1,
-                            "VALUE_IN_FILE2": val2,
-                            "ADDITIONAL_COMMENTS": "Vote value mismatch"
-                        })
+
+                    # Numeric comparison for vote-related fields
+                    if isinstance(val1, (int, float)) or isinstance(val2, (int, float)):
+                        if pd.isna(val1) and pd.isna(val2):
+                            continue
+                        if val1 != val2:
+                            mismatches.append({
+                                "DMX_ISSUER_ID": issuer_id,
+                                "DMX_ISSUER_NAME": issuer_name1,
+                                "MISMATCHED_COLUMN": col,
+                                "VALUE_IN_FILE1": val1,
+                                "VALUE_IN_FILE2": val2,
+                                "ADDITIONAL_COMMENTS": "Vote value mismatch"
+                            })
+                    else:
+                        # String/text comparison
+                        if val1 != val2:
+                            mismatches.append({
+                                "DMX_ISSUER_ID": issuer_id,
+                                "DMX_ISSUER_NAME": issuer_name1,
+                                "MISMATCHED_COLUMN": col,
+                                "VALUE_IN_FILE1": val1,
+                                "VALUE_IN_FILE2": val2,
+                                "ADDITIONAL_COMMENTS": "Text mismatch"
+                            })
 
     return pd.DataFrame(mismatches)
 
